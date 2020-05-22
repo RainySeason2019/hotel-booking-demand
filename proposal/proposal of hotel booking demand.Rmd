@@ -1,0 +1,278 @@
+---
+title: "Proposal of Hotel Hooking Demand"
+author: "Jing Zhang"
+date: "2020/5/22"
+output: 
+  html_document: 
+    highlight: textmate
+    number_sections: yes
+    theme: cerulean
+    toc: yes
+    toc_depth: 5
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Motivation
+
+* When booking a hotel, people consider many factors, such as the best time to book a hotel, the location of the hotel and so on. For the hotel manager, how to better attract customers to book the hotel? Now I want to explore this issue from a different perspective. I want to know how likely it is for people to choose to eat in hotels so as to provide some constructive suggestions for hotels to attract more customers. My final goal is to make predictions about the possibility that people will choose to eat in hotels.
+
+
+
+# Data preparation and description
+
+* This dataset comes from the Kaggle(https://www.kaggle.com/jessemostipak/hotel-booking-demand#hotel_bookings.csv) and contains booking information for a city hotel and a resort hotel, and includes information such as when the booking was made, length of stay, the number of adults, children, and/or babies, and the number of available parking spaces, among other things. Additionally,the data is originally from the article Hotel Booking Demand Datasets, written by Nuno Antonio, Ana Almeida, and Luis Nunes for Data in Brief, Volume 22, February 2019. The paper claimed that the data comprehend bookings due to arrive between the 1st of July of 2015 and the 31st of August 2017, including bookings that effectively arrived and bookings that were canceled. All personally identifying information has been removed from the data.
+
+## First import the libraries needed in following analysis.
+
+```{r}
+library(tibble)
+library(tidyr)
+library(dplyr)
+library(skimr)
+library(nnet)
+library(GGally)
+library(ggplot2)
+library(corrplot)
+library(RColorBrewer)
+```
+
+## Load the dataset
+
+```{r}
+hotel = read.csv('hotels.csv')
+hotel = as_tibble(hotel)
+head(hotel)
+# glimpse(hotel)
+```
+
+
+## The dataset have 119390 observations and 32 variables.
+
+```{r}
+dim(hotel)
+```
+
+
+## Let's have a look at the names of the variables.
+
+```{r}
+names(hotel)
+```
+
+* The meanings of each variable are listed below.
+
+hotel:Hotel (H1 = Resort Hotel or H2 = City Hotel)
+is_canceledValue indicating if the booking was canceled (1) or not (0)
+lead_timeNumber of days that elapsed between the entering date of the booking into the PMS and the arrival date
+arrival_date_yearYear of arrival date
+arrival_date_monthMonth of arrival date
+arrival_date_week_numberWeek number of year for arrival date
+arrival_date_day_of_monthDay of arrival date
+stays_in_weekend_nightsNumber of weekend nights (Saturday or Sunday) the guest stayed or booked to stay at the hotel
+stays_in_week_nightsNumber of week nights (Monday to Friday) the guest stayed or booked to stay at the hotel
+adultsNumber of adults
+childrenNumber of children
+babiesNumber of babies
+mealType of meal booked. Categories are presented in standard hospitality meal packages: Undefined/SC – no meal package; BB – Bed & Breakfast; HB – Half board (breakfast and one other meal – usually dinner); FB – Full board (breakfast, lunch and dinner)
+countryCountry of origin. Categories are represented in the ISO 3155–3:2013 format
+market_segmentMarket segment designation. In categories, the term “TA” means “Travel Agents” and “TO” means “Tour Operators”
+distribution_channelBooking distribution channel. The term “TA” means “Travel Agents” and “TO” means “Tour Operators”
+is_repeated_guestValue indicating if the booking name was from a repeated guest (1) or not (0)
+previous_cancellationsNumber of previous bookings that were cancelled by the customer prior to the current booking
+previous_bookings_not_canceledNumber of previous bookings not cancelled by the customer prior to the current booking
+reserved_room_typeCode of room type reserved. Code is presented instead of designation for anonymity reasons.
+assigned_room_type
+Code for the type of room assigned to the booking. Sometimes the assigned room type differs from the reserved room type due to hotel operation reasons (e.g. overbooking) or by customer request. Code is presented instead of designation for anonymity reasons.
+booking_changesNumber of changes/amendments made to the booking from the moment the booking was entered on the PMS until the moment of check-in or cancellation
+deposit_typeIndication on if the customer made a deposit to guarantee the booking. This variable can assume three categories: No Deposit – no deposit was made; Non Refund – a deposit was made in the value of the total stay cost; Refundable – a deposit was made with a value under the total cost of stay.
+agentID of the travel agency that made the booking
+companyID of the company/entity that made the booking or responsible for paying the booking. ID is presented instead of designation for anonymity reasons
+days_in_waiting_listNumber of days the booking was in the waiting list before it was confirmed to the customer
+customer_type
+Type of booking, assuming one of four categories:
+Contract - when the booking has an allotment or other type of contract associated to it; Group – when the booking is associated to a group; Transient – when the booking is not part of a group or contract, and is not associated to other transient booking; Transient-party – when the booking is transient, but is associated to at least other transient booking
+adrAverage Daily Rate as defined by dividing the sum of all lodging transactions by the total number of staying nights
+required_car_parking_spacesNumber of car parking spaces required by the customer
+total_of_special_requestsNumber of special requests made by the customer (e.g. twin bed or high floor)
+reservation_statusReservation last status, assuming one of three categories: Canceled – booking was canceled by the customer; Check-Out – customer has checked in but already departed; No-Show – customer did not check-in and did inform the hotel of the reason why
+reservation_status_dateDate at which the last status was set. This variable can be used in conjunction with the ReservationStatus to understand when was the booking canceled or when did the customer checked-out of the hotel
+
+## Let's get an overview of the dataset’s characteristics.
+
+```{r}
+skim(hotel)
+```
+
+# Exploratory data analysis
+
+## Handle the missing values
+
+```{r}
+#is.na(hotel)
+which(is.na(hotel), arr.ind = T) # column 11 has missing values
+names(hotel)[11]
+hotel = replace_na(hotel, list(children = 0))
+which(is.na(hotel), arr.ind = T)
+```
+
+
+## Let’s filter to only the bookings that did not cancel.
+
+```{r}
+hotel_0 = filter(hotel, is_canceled == 0)
+head(hotel_0)
+```
+
+## Handle the columns "meal" and "required_car_parking_spaces"
+
+```{r}
+hotel_0 <- hotel_0 %>%
+  mutate(
+    meal = case_when(
+      meal == "SC" ~ "meal_none",
+      meal == "Undefined" ~ "meal_none",
+      TRUE ~ as.character(meal)
+    ),
+    required_car_parking_spaces = case_when(
+      required_car_parking_spaces > 0 ~ "parking",
+      TRUE ~ "none"
+    ),
+  )
+X_meal = distinct(hotel_0, meal)
+X_meal
+```
+
+
+```{r}
+## Set dummy variables based on column "meal"
+meal_dummy = as_tibble(class.ind(hotel_0$meal))
+hotel_0 = hotel_0 %>% transform("BB" = meal_dummy$BB) %>%
+  transform("FB" = meal_dummy$FB) %>%
+  transform("HB" = meal_dummy$HB) %>%
+  transform("meal_none" = meal_dummy$meal_none)
+  
+# dim(hotel_0)  75166 X 36
+```
+
+
+## Let's plot how the features are correlated to each other.
+
+```{r}
+hotel_numeric = tibble(zero = rep(0, nrow(hotel_0)))
+
+temp_name = c("zero")
+for(i in 1:ncol(hotel_0))
+{
+  if(class(hotel_0[[i]]) == "integer" | class(hotel_0[[i]]) == "numeric")
+  {
+    temp = unlist(select(hotel_0, i))
+    temp_name = c(temp_name, names(select(hotel_0, i)))
+    hotel_numeric = add_column(hotel_numeric, temp)
+    names(hotel_numeric) = paste("X", 1:ncol(hotel_numeric),sep = "")
+  }
+}
+names(hotel_numeric) = temp_name
+# dim(hotel_numeric) ## 75166    18
+
+hotel_numeric = select(hotel_numeric, -c(zero, is_canceled))
+```
+
+
+```{r}
+# caculate corr
+cor_hotel = as.data.frame(cor(hotel_numeric))
+cor_hotel$ID = rownames(cor_hotel)
+require(reshape2)
+cor_hotel_0 = melt(cor_hotel, id.vars = c("ID"))
+#view(cor_hotel_0)
+```
+
+
+```{r}
+## plot the heatmap
+p <- ggplot(cor_hotel_0, aes(x = variable, y = ID, fill = value))+
+  theme(panel.background = element_blank(),axis.line = element_line(colour="black"))+
+  theme(axis.ticks.x = element_blank()) +
+  theme(axis.ticks.y = element_blank()) +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(legend.title = element_blank()) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+p + geom_raster()
+```
+
+
+## Do elders with children choose to eat in hotels? Is this different in the city and the resort hotel?
+
+```{r}
+ggplot(hotel_0, aes(x = children)) + geom_bar(aes(fill = factor(meal)), position="fill")
+```
+
+* From the plot, we can know the number of children does not have much effect on whether people choose to eat in a hotel.
+
+```{r}
+hotel_0 = hotel_0 %>% mutate(
+  children = case_when(
+    children > 0 ~ "children",
+    TRUE ~ "none"
+  )
+)
+```
+
+
+```{r}
+ggplot(hotel_0, aes(x = babies)) + 
+  geom_bar(aes(fill = factor(meal)), position="fill") +
+  labs(y = "proportion")
+
+```
+
+
+```r
+ggplot(hotel_0, aes(children))+geom_bar(aes(fill = meal))+ coord_polar(theta = "y")
+```
+
+## Does the availability of parking affect people's choice to eat in hotels? Is this different in the city and the resort hotel?
+
+```{r}
+hotel_0 %>%
+  count(hotel, required_car_parking_spaces, meal) %>%
+  group_by(hotel, meal) %>%
+  mutate(proportion = n / sum(n)) %>%
+  ggplot(aes(required_car_parking_spaces, proportion, fill = meal)) +
+  geom_col(position = "dodge") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  facet_wrap(~hotel, nrow = 2) +
+  labs(
+    x = NULL,
+    y = "Proportion of hotel stays",
+    fill = NULL
+  )
+```
+
+
+```{r}
+hotel_0 %>%
+  select(
+    meal, adr,
+    required_car_parking_spaces,
+    total_of_special_requests
+  ) %>%
+  ggpairs(mapping = aes(color = meal))
+```
+
+## Does the average daily rate affect people's choice to eat in hotels?
+
+```{r}
+ggplot(hotel_0, aes(x = meal, y = adr)) + 
+  geom_boxplot(fill = brewer.pal(7, "Blues")[4], color = brewer.pal(7, "Blues")[6])
+```
+
+
+# Plan for Future Analysis
+
+* According to the results of exploratory data analysis, I can know that the elders with children,  the availability of parking and the average daily rate affect people's choice to eat in hotels. Thus I will use these information to model the problem I have mentioned before. And then I will partition the data set into training dataset and test dataset. The former is used to model and the latter is used to evaluate the performance of the model and calculate the error rate.
