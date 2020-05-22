@@ -11,6 +11,7 @@ There are a total of 119,390 observations and 32 variables in this data set, amo
 
 # Codes
 codes of EDA.R : data precessing and EDA
+
 codes of the model.R : using tidymodels to make formal modeling and compare three different methods -- logistic regresson, k-nearest-neighbor and decision tree.
 
 # Reproducibility
