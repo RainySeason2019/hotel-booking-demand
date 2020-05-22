@@ -1,0 +1,267 @@
+---
+title: "Hotel Booking Demand"
+author: "Jing Zhang"
+date: "2020/5/7"
+output: 
+  beamer_presentation:
+    colortheme: dolphin
+    theme: Madrid
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Introduction
+
+## Motivation
+
+* When booking a hotel, people consider many factors, such as the best time to book a hotel, the location of the hotel and so on. For the hotel manager, how to better attract customers to book the hotel?
+
+* Now I want to explore this issue from a different perspective. I want to know how likely it is for people to choose to eat in hotels so as to provide some constructive suggestions for hotels to attract more customers. 
+
+* My final goal is to make predictions about the possibility that people will choose to eat in hotels.
+
+## Data preparation and description
+
+* This dataset comes from the Kaggle and contains booking information for a city hotel and a resort hotel, and includes information such as when the booking was made, length of stay, the number of adults, children, and/or babies, and the number of available parking spaces, among other things. 
+
+```{r}
+suppressMessages(library(tibble))
+suppressMessages(library(tidyr))
+suppressMessages(library(reshape2))
+suppressMessages(library(dplyr))
+suppressMessages(library(skimr))
+suppressMessages(library(nnet))
+suppressMessages(library(GGally))
+suppressMessages(library(ggplot2))
+suppressMessages(library(corrplot))
+suppressMessages(library(pROC))
+suppressMessages(library(plotROC))
+suppressMessages(library(e1071))
+suppressMessages(library(rpart))
+suppressMessages(library(RColorBrewer))
+hotel = read.csv('hotels.csv')
+hotel = as_tibble(hotel)
+summary(skim(hotel))
+```
+
+# Exploratory data analysis
+
+## How the features are correlated to each other
+
+```{r}
+## Handle the missing values
+
+#is.na(hotel)
+#which(is.na(hotel), arr.ind = T) # column 11 has missing values
+#names(hotel)[11]
+hotel = replace_na(hotel, list(children = 0))
+#which(is.na(hotel), arr.ind = T)
+
+
+## Handle the columns "meal" and "required_car_parking_spaces"
+
+hotel <- hotel %>%
+  mutate(
+    meal = case_when(
+      meal == "SC" ~ "meal_none",
+      meal == "Undefined" ~ "meal_none",
+      TRUE ~ as.character(meal)
+    ),
+    required_car_parking_spaces = case_when(
+      required_car_parking_spaces > 0 ~ "parking",
+      TRUE ~ "none"
+    ),
+  )
+X_meal = distinct(hotel, meal)
+
+## Set dummy variables based on column "meal"
+meal_dummy = as_tibble(class.ind(hotel$meal))
+hotel = hotel %>% transform("BB" = meal_dummy$BB) %>%
+  transform("FB" = meal_dummy$FB) %>%
+  transform("HB" = meal_dummy$HB) %>%
+  transform("meal_none" = meal_dummy$meal_none)
+  
+# dim(hotel)  119390 X 36
+
+## Let’s filter to only the bookings that did not cancel.
+
+hotel_0 = filter(hotel, is_canceled == 0)
+
+## Let's plot how the features are correlated to each other.
+
+hotel_numeric = tibble(zero = rep(0, nrow(hotel_0)))
+temp_name = c("zero")
+for(i in 1:ncol(hotel_0))
+{
+  if(class(hotel_0[[i]]) == "integer" | class(hotel_0[[i]]) == "numeric")
+  {
+    temp = unlist(select(hotel_0, i))
+    temp_name = c(temp_name, names(select(hotel_0, i)))
+    hotel_numeric = add_column(hotel_numeric, temp)
+    names(hotel_numeric) = paste("X", 1:ncol(hotel_numeric),sep = "")
+  }
+}
+names(hotel_numeric) = temp_name
+# dim(hotel_numeric) ## 75166    18
+
+hotel_numeric = select(hotel_numeric, -c(zero, is_canceled))
+```
+
+```{r}
+## plot heatmap
+cor_hotel = as.data.frame(cor(hotel_numeric))
+cor_hotel$ID = rownames(cor_hotel)
+cor_hotel_0 = melt(cor_hotel, id.vars = c("ID"))
+#view(cor_hotel_0)
+p <- ggplot(cor_hotel_0, aes(x = variable, y = ID, fill = value))+
+  theme(panel.background = element_blank(),axis.line = element_line(colour="black"))+
+  theme(axis.ticks.x = element_blank()) +
+  theme(axis.ticks.y = element_blank()) +
+  theme(axis.title.y = element_blank()) +
+  theme(axis.title.x = element_blank()) +
+  theme(legend.title = element_blank()) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  theme(plot.margin = unit(rep(3, 4), 'lines'))
+p + geom_raster()
+```
+
+## Do elders with children choose to eat in hotels?
+
+```{r}
+ggplot(hotel_0, aes(x = children)) + 
+  geom_bar(aes(fill = factor(meal)), position="fill") +
+  labs(y = "proportion") +
+  theme(plot.margin = unit(rep(3, 4), 'lines'))
+```
+
+
+## Do elders with babies choose to eat in hotels?
+
+```{r}
+ggplot(hotel_0, aes(x = babies)) + 
+  geom_bar(aes(fill = factor(meal)), position="fill") +
+  labs(y = "proportion") +
+  scale_x_continuous(breaks = seq(min(hotel_0$babies), max(hotel_0$babies), 1)) +
+  theme(plot.margin = unit(rep(3, 4), 'lines'))
+```
+
+
+## How about availability of parking?
+```{r}
+hotel_0 %>%
+  count(hotel, required_car_parking_spaces, meal) %>%
+  group_by(hotel, meal) %>%
+  mutate(proportion = n / sum(n)) %>%
+  ggplot(aes(required_car_parking_spaces, proportion, fill = meal)) +
+  geom_col(position = "dodge") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  facet_wrap(~hotel, nrow = 2) +
+  labs(x = NULL, y = "Proportion of hotel stays") +
+  theme(plot.margin = unit(rep(0.5, 4), 'lines'))
+```
+
+## Does the average daily rate affect people's choice to eat in hotels?
+
+```{r}
+ggplot(hotel_0, aes(x = meal, y = adr)) + 
+  geom_boxplot(fill = brewer.pal(7, "Blues")[4], color = brewer.pal(7, "Blues")[6]) +
+  labs(y = "Average Daily Rate") +
+  theme(plot.margin = unit(rep(3, 4), 'lines'))
+```
+
+
+# Formal Modeling
+
+```{r}
+hotel = hotel %>% mutate(
+  children = case_when(
+    children > 0 ~ "children",
+    TRUE ~ "none"
+  )
+)
+#distinct(hotel, children)
+
+# "meal_none" <- 0
+# "HB" <- 1
+# "FB" <- 1
+# "BB" <- 1
+
+temp_meal = sub("meal_none", "0", hotel$meal) 
+temp_meal = sub("HB", "1", temp_meal) 
+temp_meal = sub("FB", "1", temp_meal) 
+temp_meal = sub("BB", "1", temp_meal)
+temp_meal = as.numeric(temp_meal)
+hotel = add_column(hotel, temp_meal)
+hotel = rename(hotel, order_meal = temp_meal)
+# dim(hotel) 119390 X 37
+
+## Dealing with maxima and minima
+
+a = hotel # a is not a tibble
+q20 = quantile(a$adr, 0.2)
+q80 = quantile(a$adr, 0.8)
+a[a$adr < q20, ]$adr <- q20
+a[a$adr > q80, ]$adr <- q80
+#summary(a$adr)
+
+hotel_new = as_tibble(a)
+names_new = names(hotel)
+names(hotel_new) <- names_new
+# dim(hotel_new) 119390 X 37
+#head(hotel_new)
+
+## Choose the features
+hotel_new = filter(hotel_new, is_canceled == 0)
+hotel_f = select(hotel_new, children, babies, required_car_parking_spaces, adr, order_meal)
+# dim(hotel_f) 75166 X 5
+
+
+## Divide the dataset into training set and test set.
+
+set.seed(123)
+train_data = sample_frac(hotel_f, 0.8)
+test_data = sample_frac(hotel_f, 0.2)
+```
+
+## Logistic Regression
+
+```{r}
+glm_log = glm(order_meal~., data = train_data, family = binomial("logit"))
+#glm_log
+#summary(glm_log)
+
+#step_log = step(glm_log, direction = "both")
+#summary(step_log)
+
+### Test the model
+pre_log = predict(glm_log, test_data, type = "response")
+#head(pre_log)
+fitted_log = ifelse(pre_log > 0.5, 1, 0)
+accuracy_log = table(fitted_log, test_data$order_meal)
+ggplot(test_data, aes(d = order_meal, m = pre_log)) + geom_roc()
+```
+
+## Model
+
+$$\hat{h}_\theta(z) = \frac{1}{1 + \exp{(-z)}}$$
+$$z = \hat{\theta}^{T}x$$
+$$\hat{\theta} = (3.684, -1.366, 0.433, 1.062, -0.003)^{T}$$
+$$x = (x_0, x_{children}, x_{babies}, x_{park}, x_{adr})^{T}$$
+
+## Future Analysis
+
+* Use different methods to make predictions, such as decision tree, SVM and so on.
+
+* Compare the used methods and analyze their pros and cons.
+
+* Choose the best model to make predictions.
+
+## The end
+
+\begin{center}
+Thank you!
+\end{center}
+
